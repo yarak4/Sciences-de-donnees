@@ -18,6 +18,8 @@ from sklearn.model_selection import KFold
 from sklearn.metrics import confusion_matrix
 import seaborn as sns
 import matplotlib.pyplot as plt
+from sklearn.feature_extraction.text import CountVectorizer
+import graphviz as gv
 
 # ---------------------------
 def classe_majoritaire(Y):
@@ -51,67 +53,62 @@ def entropie(Y):
     P = nb_fois / len(Y)  # Calcul des probabilités
     return shannon(P)  # Calcul de l'entropie de Shannon
 
-def analyser_classifieur_matrice(clf, X, y, classe_positive=None, n_folds=5):
-    """
-    Évalue un classifieur sur données vectorisées (X, y) avec affichage de résultats et matrice de confusion.
+def entropie_conditionnelle(Y, Xj):
+    """Calcule l'entropie conditionnelle H(Y|Xj)."""
+    valeurs_Xj, counts = np.unique(Xj, return_counts=True)
+    H_Y_given_Xj = 0.0
+    
+    for v, count in zip(valeurs_Xj, counts):
+        Y_subset = Y[Xj == v]  # Filtrer Y selon la valeur v de Xj
+        H_Y_given_Xj += (count / len(Y)) * entropie(Y_subset)
+    
+    return H_Y_given_Xj
 
-    - clf : classifieur (hérite de Classifier)
-    - X : matrice numpy (features déjà vectorisées)
-    - y : labels (array ou liste)
-    - classe_positive : pour classification binaire, sinon None pour multiclasse
-    - n_folds : nombre de folds
-    """
-    # Binarisation si demandé
-    if classe_positive is not None:
-        y = np.array([1 if label == classe_positive else -1 for label in y])
-        mode = f"Binaire (classe {classe_positive})"
-        labels_display = [-1, 1]
-    else:
-        y = np.array(y)
-        mode = "Multiclasse"
-        labels_display = sorted(np.unique(y))
 
-    kf = KFold(n_splits=n_folds, shuffle=True, random_state=42)
-    scores = []
-    total_conf_matrix = np.zeros((len(labels_display), len(labels_display)), dtype=int)
-    total_time = 0
 
-    print(f"▶ Évaluation {mode} en {n_folds} folds...\n")
+def construit_AD(X, Y, epsilon, LNoms=[]):
+    """Construit un arbre de décision en utilisant seulement les fonctions définies avant."""
 
-    for fold, (train_idx, test_idx) in enumerate(kf.split(X)):
-        X_train, X_test = X[train_idx], X[test_idx]
-        y_train, y_test = y[train_idx], y[test_idx]
+    entropie_ens = entropie(Y)
 
-        start = time.time()
-        clf.train(X_train, y_train)
-        elapsed = time.time() - start
-        total_time += elapsed
+    if entropie_ens <= epsilon:  # Critère d'arrêt
+        noeud = NoeudCategoriel(-1, "Label")
+        noeud.ajoute_feuille(classe_majoritaire(Y))
+        return noeud
 
-        y_pred = np.array([clf.predict(x) for x in X_test])
-        acc = clf.accuracy(X_test, y_test)
-        scores.append(acc)
+    # Initialisation des variables pour trouver l'attribut optimal
+    min_entropie = float('inf')
+    i_best = -1
+    Xbest_valeurs = None
 
-        cm = confusion_matrix(y_test, y_pred, labels=labels_display)
-        total_conf_matrix += cm
+    for i in range(X.shape[1]):  # Parcourir tous les attributs
+        H_Y_given_Xi = entropie_conditionnelle(Y, X[:, i])
+        
+        if H_Y_given_Xi < min_entropie:
+            min_entropie = H_Y_given_Xi
+            i_best = i
+            Xbest_valeurs = np.unique(X[:, i])
 
-        print(f"Fold {fold+1} — Accuracy : {acc:.4f} — Temps : {elapsed:.2f} s")
+    if i_best == -1:  # Aucun gain d'information -> on crée une feuille
+        noeud = NoeudCategoriel(-1, "Label")
+        noeud.ajoute_feuille(classe_majoritaire(Y))
+        return noeud
 
-    print("\n Résumé général")
-    print(f"→ Type : {mode}")
-    print(f"→ Moyenne accuracy : {np.mean(scores):.4f}")
-    print(f"→ Écart-type : {np.std(scores):.4f}")
-    print(f"→ Temps total : {total_time:.2f} sec (≈ {total_time/n_folds:.2f} sec/fold)")
+    # Création du nœud pour l'attribut sélectionné
+    noeud = NoeudCategoriel(i_best, LNoms[i_best] if LNoms else f"att_{i_best}")
 
-    # 🎨 Affichage graphique de la matrice de confusion
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(total_conf_matrix, annot=True, fmt='d', cmap='Blues',
-                xticklabels=labels_display, yticklabels=labels_display)
-    plt.title(f'Matrice de confusion — {mode}')
-    plt.xlabel('Prédiction')
-    plt.ylabel('Réel')
-    plt.tight_layout()
-    plt.show()
+    for v in Xbest_valeurs:
+        indices = (X[:, i_best] == v)  # Filtrer X et Y selon la valeur v
+        X_subset, Y_subset = X[indices], Y[indices]
 
+        if len(Y_subset) == 0:  # Cas où aucun exemple ne correspond
+            feuille = NoeudCategoriel(-1, "Label")
+            feuille.ajoute_feuille(classe_majoritaire(Y))
+            noeud.ajoute_fils(v, feuille)
+        else:
+            noeud.ajoute_fils(v, construit_AD(X_subset, Y_subset, epsilon, LNoms))
+
+    return noeud
 
 
 
@@ -226,8 +223,7 @@ class ClassifierKNNMulti(Classifier):
 
     def score(self, x):
         """ Retourne -distance pour compatibilité (pas utilisé ici) """
-        distances = np.linalg.norm(x - self.desc_set, axis=1)
-        return -np.min(distances)
+        return 1
 
     def predict(self, x):
         distances = np.linalg.norm(x - self.desc_set, axis=1)
@@ -366,4 +362,149 @@ class ClassifierPerceptron(Classifier):
     
     def get_allw(self):
         return self.allw
+    
+class ClassifierArbreDecision(classif.Classifier):
+    """ Classe pour représenter un classifieur par arbre de décision
+    """
+    
+    def __init__(self, input_dimension, epsilon, LNoms=[]):
+        """ Constructeur
+            Argument:
+                - intput_dimension (int) : dimension de la description des exemples
+                - epsilon (float) : paramètre de l'algorithme (cf. explications précédentes)
+                - LNoms : Liste des noms de dimensions (si connues)
+            Hypothèse : input_dimension > 0
+        """
+        classif.Classifier.__init__(self,input_dimension)  # Appel du constructeur de la classe mère
+        self.epsilon = epsilon
+        self.LNoms = LNoms
+        # l'arbre est manipulé par sa racine qui sera un Noeud
+        self.racine = None
+        
+    def toString(self):
+        """  -> str
+            rend le nom du classifieur avec ses paramètres
+        """
+        return 'ClassifierArbreDecision ['+str(self.dimension) + '] eps='+str(self.epsilon)
+        
+    def train(self, desc_set, label_set):
+        """ Permet d'entrainer le modele sur l'ensemble donné
+            desc_set: ndarray avec des descriptions
+            label_set: ndarray avec les labels correspondants
+            Hypothèse: desc_set et label_set ont le même nombre de lignes
+        """        
+        self.racine = construit_AD(desc_set, label_set, self.epsilon, self.LNoms)
+    
+    def score(self,x):
+        """ rend le score de prédiction sur x (valeur réelle)
+            x: une description
+        """
+        # cette méthode ne fait rien dans notre implémentation :
+        pass
+    
+    def predict(self, x):
+        """ x (array): une description d'exemple
+            rend la prediction sur x             
+        """
+        return self.racine.classifie(x)
 
+
+    def number_leaves(self):
+        """ rend le nombre de feuilles de l'arbre
+        """
+        return self.racine.compte_feuilles()
+    
+    def draw(self,GTree):
+        """ affichage de l'arbre sous forme graphique
+            Cette fonction modifie GTree par effet de bord
+        """
+        self.racine.to_graph(GTree)
+
+class NoeudCategoriel:
+    """ Classe pour représenter des noeuds d'un arbre de décision
+    """
+    def __init__(self, num_att=-1, nom=''):
+        """ Constructeur: il prend en argument
+            - num_att (int) : le numéro de l'attribut auquel il se rapporte: de 0 à ...
+              si le noeud se rapporte à la classe, le numéro est -1, on n'a pas besoin
+              de le préciser
+            - nom (str) : une chaîne de caractères donnant le nom de l'attribut si
+              il est connu (sinon, on ne met rien et le nom sera donné de façon 
+              générique: "att_Numéro")
+        """
+        self.attribut = num_att    # numéro de l'attribut
+        if (nom == ''):            # son nom si connu
+            self.nom_attribut = 'att_'+str(num_att)
+        else:
+            self.nom_attribut = nom 
+        self.Les_fils = None       # aucun fils à la création, ils seront ajoutés
+        self.classe   = None       # valeur de la classe si c'est une feuille
+        
+    def est_feuille(self):
+        """ rend True si l'arbre est une feuille 
+            c'est une feuille s'il n'a aucun fils
+        """
+        return self.Les_fils == None
+    
+    def ajoute_fils(self, valeur, Fils):
+        """ valeur : valeur de l'attribut de ce noeud qui doit être associée à Fils
+                     le type de cette valeur dépend de la base
+            Fils (NoeudCategoriel) : un nouveau fils pour ce noeud
+            Les fils sont stockés sous la forme d'un dictionnaire:
+            Dictionnaire {valeur_attribut : NoeudCategoriel}
+        """
+        if self.Les_fils == None:
+            self.Les_fils = dict()
+        self.Les_fils[valeur] = Fils
+        # Rem: attention, on ne fait aucun contrôle, la nouvelle association peut
+        # écraser une association existante.
+    
+    def ajoute_feuille(self,classe):
+        """ classe: valeur de la classe
+            Ce noeud devient un noeud feuille
+        """
+        self.classe    = classe
+        self.Les_fils  = None   # normalement, pas obligatoire ici, c'est pour être sûr
+        
+    def classifie(self, exemple):
+        """ exemple : numpy.array
+            rend la classe de l'exemple 
+            on rend la valeur None si l'exemple ne peut pas être classé (cf. les questions
+            posées en fin de ce notebook)
+        """
+        if self.est_feuille():
+            return self.classe
+        if exemple[self.attribut] in self.Les_fils:
+            # descente récursive dans le noeud associé à la valeur de l'attribut
+            # pour cet exemple:
+            return self.Les_fils[exemple[self.attribut]].classifie(exemple)
+        else:
+            # Cas particulier : on ne trouve pas la valeur de l'exemple dans la liste des
+            # fils du noeud... Voir la fin de ce notebook pour essayer de résoudre ce mystère...
+            print('\t*** Warning: attribut ',self.nom_attribut,' -> Valeur inconnue: ',exemple[self.attribut])
+            return None
+    
+    def compte_feuilles(self):
+        """ rend le nombre de feuilles sous ce noeud
+        """
+        if self.est_feuille():
+            return 1
+        total = 0
+        for noeud in self.Les_fils:
+            total += self.Les_fils[noeud].compte_feuilles()
+        return total
+     
+    def to_graph(self, g, prefixe='A'):
+        """ construit une représentation de l'arbre pour pouvoir l'afficher graphiquement
+            Cette fonction ne nous intéressera pas plus que ça, elle ne sera donc pas expliquée            
+        """
+        if self.est_feuille():
+            g.node(prefixe,str(self.classe),shape='box')
+        else:
+            g.node(prefixe, self.nom_attribut)
+            i =0
+            for (valeur, sous_arbre) in self.Les_fils.items():
+                sous_arbre.to_graph(g,prefixe+str(i))
+                g.edge(prefixe,prefixe+str(i), valeur)
+                i = i+1        
+        return g
