@@ -59,6 +59,7 @@ def entropie_conditionnelle(Y, Xj):
     H_Y_given_Xj = 0.0
     
     for v, count in zip(valeurs_Xj, counts):
+        
         Y_subset = Y[Xj == v]  # Filtrer Y selon la valeur v de Xj
         H_Y_given_Xj += (count / len(Y)) * entropie(Y_subset)
     
@@ -71,7 +72,8 @@ def construit_AD(X, Y, epsilon, LNoms=[]):
 
     entropie_ens = entropie(Y)
 
-    if entropie_ens <= epsilon:  # Critère d'arrêt
+    # Condition d'arrêt : entropie faible ou données trop petites
+    if entropie_ens <= epsilon or len(Y) <= 5 or len(np.unique(Y)) == 1:
         noeud = NoeudCategoriel(-1, "Label")
         noeud.ajoute_feuille(classe_majoritaire(Y))
         return noeud
@@ -295,6 +297,7 @@ class ClassifierLineaireRandom(Classifier):
             return 1
         return -1
     
+    
 class ClassifierPerceptron(Classifier):
     """ Perceptron de Rosenblatt
     """
@@ -363,7 +366,10 @@ class ClassifierPerceptron(Classifier):
     def get_allw(self):
         return self.allw
     
-class ClassifierArbreDecision(classif.Classifier):
+
+
+    
+class ClassifierArbreDecision(Classifier):
     """ Classe pour représenter un classifieur par arbre de décision
     """
     
@@ -375,7 +381,7 @@ class ClassifierArbreDecision(classif.Classifier):
                 - LNoms : Liste des noms de dimensions (si connues)
             Hypothèse : input_dimension > 0
         """
-        classif.Classifier.__init__(self,input_dimension)  # Appel du constructeur de la classe mère
+        Classifier.__init__(self,input_dimension)  # Appel du constructeur de la classe mère
         self.epsilon = epsilon
         self.LNoms = LNoms
         # l'arbre est manipulé par sa racine qui sera un Noeud

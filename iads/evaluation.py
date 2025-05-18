@@ -21,6 +21,92 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.feature_extraction.text import CountVectorizer
 
+def evaluer_classifieur(clf, X_train, y_train, X_test, y_test, afficher_cm=True):
+    """
+    Entraîne, évalue, affiche les temps, l'accuracy, et la matrice de confusion.
+    
+    clf : classifieur (instance)
+    X_train, y_train : données d'entraînement
+    X_test, y_test : données de test
+    afficher_cm : bool, affiche ou non la matrice de confusion
+
+    Retourne : accuracy, temps_train, temps_test
+    """
+    # Entraînement
+    print("Entraînement...")
+    start_train = time.time()
+    clf.train(X_train, y_train)
+    elapsed_train = time.time() - start_train
+    print(f"Temps d'entraînement : {elapsed_train:.4f} secondes")
+
+    # Prédiction + évaluation
+    print("Évaluation...")
+    start_test = time.time()
+    y_pred = np.array([clf.predict(x) for x in X_test])
+    elapsed_test = time.time() - start_test
+
+    accuracy = np.mean(y_pred == y_test)
+    print(f"Accuracy : {accuracy:.4f}")
+    print(f"Temps d'évaluation : {elapsed_test:.4f} secondes")
+
+    # Matrice de confusion
+    if afficher_cm:
+        classes_uniques = np.unique(np.concatenate((y_test, y_pred)))
+        cm = confusion_matrix(y_test, y_pred, labels=classes_uniques)
+        afficher_matrice_confusion(cm, classes_uniques)
+
+    return accuracy, elapsed_train, elapsed_test
+
+def accuracy_avec_confusion(clf, X_test, y_test):
+    """
+    clf : classifieur entraîné (doit avoir une méthode predict(x))
+    X_test : ndarray des descriptions de test
+    y_test : ndarray des labels réels
+
+    Affiche l'accuracy et la matrice de confusion, retourne l'accuracy
+    """
+    # Prédictions
+    y_pred = np.array([clf.predict(x) for x in X_test])
+
+    # Accuracy
+    accuracy = np.mean(y_pred == y_test)
+    print(f"Accuracy : {accuracy:.4f}")
+
+    # Matrice de confusion
+    classes_uniques = np.unique(np.concatenate((y_test, y_pred)))
+    cm = confusion_matrix(y_test, y_pred, labels=classes_uniques)
+
+    # Affichage
+    afficher_matrice_confusion(cm, classes_uniques)
+
+    return accuracy
+
+
+def afficher_resultats_validation_croisee(perfs, moyenne, ecart_type, matrice_confusion, classes):
+    print("Performances par fold :")
+    for i, perf in enumerate(perfs, 1):
+        print(f"  Fold {i}: {perf:.4f}")
+    print(f"\nPerformance moyenne : {moyenne:.4f}")
+    print(f"Écart-type : {ecart_type:.4f}\n")
+
+def crossval(C, X, y, nb_iter):
+    performances, moyenne, ecart_type, matrice_confusion = validation_croisee(C, (X,y), nb_iter)
+    # Affichage des résultats
+    print("\nValidation croisée :")
+    for i, perf in enumerate(performances):
+        print(f"  Fold {i+1}: {perf:.4f}")
+    print(f"\nMoyenne des performances : {moyenne:.4f}")
+    print(f"Écart-type : {ecart_type:.4f}")
+    
+    # Affichage matrice de confusion cumulée
+    classes = np.unique(y)
+    print("\nMatrice de confusion cumulée sur tous les folds :")
+    afficher_matrice_confusion(matrice_confusion, classes)
+    
+    return performances, moyenne, ecart_type
+
+    
+
 def afficher_matrice_confusion(matrice_confusion, classes):
     """
     matrice_confusion: np.array carrée (nb_classes x nb_classes)
@@ -39,9 +125,9 @@ def afficher_matrice_confusion(matrice_confusion, classes):
 def validation_croisee(C, DS, nb_iter):
     """
     C: instance de classifieur (ex: ClassifierKNNMulti déjà instancié)
-    DS: tuple (X, y) où
-        - X est un ndarray de descriptions (ex: vecteurs)
-        - y est un ndarray des labels correspondants
+    
+     X est un ndarray de descriptions (ex: vecteurs)
+    y est un ndarray des labels correspondants
     nb_iter: int, nombre de folds
 
     Rend: (liste_perf, moyenne_perf, ecart_type_perf, matrice_confusion_cumulee)
@@ -114,190 +200,3 @@ def train_test_evaluation(X_train, y_train, X_test, y_test, classifier_class, cl
     return accuracy
 
 
-def prepare_vectorizer(texts_train, texts_full=None, binary=True, max_features=50_000):
-    """
-    Crée et fit un CountVectorizer binaire (ou pas) sur les textes d'entraînement
-    Optionnellement fit sur le dataset full pour un vocab plus large.
-    Retourne le vectorizer entraîné.
-    """
-    vect = CountVectorizer(binary=binary, max_features=max_features)
-    if texts_full is not None:
-        vect.fit(texts_full)
-    else:
-        vect.fit(texts_train)
-    return vect
-
-def vectorize_texts(vect, texts):
-    """ Transforme une liste de textes en matrice numpy vectorisée via un vectorizer déjà fit """
-    return vect.transform(texts).toarray()
-
-def get_labels(dataframe, target_col='target'):
-    """ Récupère les labels au format numpy array """
-    return dataframe[target_col].to_numpy()
-
-def evaluate_fold(clf, X_train, y_train, X_test, y_test, labels_display):
-    """
-    Entraîne clf sur (X_train, y_train), prédit sur X_test, calcule accuracy, matrice confusion, temps.
-
-    Retourne (accuracy, matrice_confusion, elapsed_time)
-    """
-    start = time.time()
-    clf.train(X_train, y_train)
-    elapsed = time.time() - start
-
-    y_pred = np.array([clf.predict(x) for x in X_test])
-    acc = clf.accuracy(X_test, y_test)
-    cm = confusion_matrix(y_test, y_pred, labels=labels_display)
-
-    return acc, cm, elapsed
-
-
-def plot_confusion_matrix(conf_matrix, labels_display, title="Matrice de confusion"):
-    """
-    Affiche une matrice de confusion avec seaborn heatmap.
-    """
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues',
-                xticklabels=labels_display, yticklabels=labels_display)
-    plt.title(title)
-    plt.xlabel('Prédiction')
-    plt.ylabel('Réel')
-    plt.tight_layout()
-    plt.show()
-
-
-def crossval_evaluation_with_time(clf_class, X, y, n_folds=5, **clf_kwargs):
-    
-    kf = KFold(n_splits=n_folds, shuffle=True, random_state=42)
-    scores = []
-    total_conf_matrix = np.zeros((len(np.unique(y)), len(np.unique(y))), dtype=int)
-    total_train_time = 0
-    total_test_time = 0
-
-    print(f"▶ Validation croisée {n_folds}-fold")
-
-    for fold, (train_idx, test_idx) in enumerate(kf.split(X)):
-        X_train, X_test = X[train_idx], X[test_idx]
-        y_train, y_test = y[train_idx], y[test_idx]
-
-        clf = clf_class(input_dimension=X.shape[1], **clf_kwargs)
-
-        start_train = time.time()
-        clf.train(X_train, y_train)
-        elapsed_train = time.time() - start_train
-
-        start_test = time.time()
-        y_pred = np.array([clf.predict(x) for x in X_test])
-        elapsed_test = time.time() - start_test
-
-        acc = np.mean(y_pred == y_test)
-        scores.append(acc)
-        total_train_time += elapsed_train
-        total_test_time += elapsed_test
-
-        cm = confusion_matrix(y_test, y_pred, labels=np.unique(y))
-        total_conf_matrix += cm
-
-        print(f"Fold {fold+1} — Accuracy : {acc:.4f} — Temps entraînement : {elapsed_train:.2f}s — Temps test : {elapsed_test:.2f}s")
-
-    print("\nRésumé général")
-    print(f"→ Moyenne accuracy : {np.mean(scores):.4f}")
-    print(f"→ Écart-type : {np.std(scores):.4f}")
-    print(f"→ Temps total entraînement : {total_train_time:.2f} s (≈ {total_train_time/n_folds:.2f} s/fold)")
-    print(f"→ Temps total évaluation : {total_test_time:.2f} s (≈ {total_test_time/n_folds:.2f} s/fold)")
-
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(total_conf_matrix, annot=True, fmt='d', cmap='Blues',
-                xticklabels=np.unique(y), yticklabels=np.unique(y))
-    plt.title(f'Matrice de confusion cumulée sur {n_folds} folds')
-    plt.xlabel('Prédiction')
-    plt.ylabel('Réel')
-    plt.tight_layout()
-    plt.show()
-
-    return np.mean(scores), np.std(scores), total_train_time, total_test_time
-
-def analyser_classifieur_matrice(clf, X_train, y_train, X_test, y_test,
-                                X_full=None, y_full=None,
-                                classe_positive=None, n_folds=5):
-    """
-    Évalue un classifieur avec :
-      - train/test fixes sur X_train/y_train et X_test/y_test
-      - validation croisée (KFold) sur X_full/y_full si fournis
-
-    Supporte classification binaire (classe_positive) ou multiclasse.
-
-    Affiche accuracy, temps, matrice de confusion pour les deux évaluations.
-    """
-
-    def binarize_labels(y, pos_class):
-        return np.array([1 if label == pos_class else -1 for label in y])
-
-    # Prépare labels selon mode binaire ou multiclasse
-    if classe_positive is not None:
-        y_train_proc = binarize_labels(y_train, classe_positive)
-        y_test_proc = binarize_labels(y_test, classe_positive)
-        mode = f"Binaire (classe {classe_positive})"
-        labels_display = [-1, 1]
-        if X_full is not None and y_full is not None:
-            y_full_proc = binarize_labels(y_full, classe_positive)
-        else:
-            y_full_proc = None
-    else:
-        y_train_proc = np.array(y_train)
-        y_test_proc = np.array(y_test)
-        mode = "Multiclasse"
-        labels_display = sorted(np.unique(y_train_proc))
-        y_full_proc = np.array(y_full) if y_full is not None else None
-
-    print(f"=== Évaluation ({mode}) sur jeu train/test fixes ===")
-    start = time.time()
-    clf.train(X_train, y_train_proc)
-    y_pred = np.array([clf.predict(x) for x in X_test])
-    elapsed = time.time() - start
-    acc = clf.accuracy(X_test, y_test_proc)
-    print(f"Accuracy sur test : {acc:.4f} - Temps entraînement+prédiction : {elapsed:.2f}s")
-    cm = confusion_matrix(y_test_proc, y_pred, labels=labels_display)
-    plt.figure(figsize=(6,5))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-                xticklabels=labels_display, yticklabels=labels_display)
-    plt.title(f"Matrice de confusion - test fixe ({mode})")
-    plt.xlabel("Prédiction")
-    plt.ylabel("Réel")
-    plt.show()
-
-    # Validation croisée
-    if X_full is not None and y_full_proc is not None:
-        print(f"\n=== Validation croisée KFold ({mode}) sur dataset complet ===")
-        kf = KFold(n_splits=n_folds, shuffle=True, random_state=42)
-        scores = []
-        total_conf_matrix = np.zeros((len(labels_display), len(labels_display)), dtype=int)
-        total_time = 0
-        for fold, (train_idx, test_idx) in enumerate(kf.split(X_full)):
-            X_tr, X_te = X_full[train_idx], X_full[test_idx]
-            y_tr, y_te = y_full_proc[train_idx], y_full_proc[test_idx]
-            start = time.time()
-            clf.train(X_tr, y_tr)
-            y_pred_fold = np.array([clf.predict(x) for x in X_te])
-            elapsed = time.time() - start
-            total_time += elapsed
-            acc_fold = clf.accuracy(X_te, y_te)
-            scores.append(acc_fold)
-            cm_fold = confusion_matrix(y_te, y_pred_fold, labels=labels_display)
-            total_conf_matrix += cm_fold
-            print(f"Fold {fold+1}: Accuracy={acc_fold:.4f}, Temps={elapsed:.2f}s")
-
-        print(f"\nMoyenne accuracy CV : {np.mean(scores):.4f} ± {np.std(scores):.4f}")
-        print(f"Temps total CV : {total_time:.2f}s ({total_time/n_folds:.2f}s par fold)")
-
-        plt.figure(figsize=(7,6))
-        sns.heatmap(total_conf_matrix, annot=True, fmt='d', cmap='Blues',
-                    xticklabels=labels_display, yticklabels=labels_display)
-        plt.title(f"Matrice de confusion - Validation croisée ({mode})")
-        plt.xlabel("Prédiction")
-        plt.ylabel("Réel")
-        plt.show()
-
-        return acc, np.mean(scores)
-    else:
-        return acc, None
