@@ -367,6 +367,43 @@ class ClassifierPerceptron(Classifier):
         return self.allw
     
 
+class BernoulliNaiveBayes(Classifier):
+    """ Classifieur Bernoulli Naive Bayes multiclasse """
+
+    def __init__(self, input_dimension, alpha=1.0):
+        super().__init__(input_dimension)
+        self.alpha = alpha
+        self.classes = None
+        self.class_log_prior = {}       # log(P(c))
+        self.feature_probs = {}         # P(w|c)
+
+    def train(self, desc_set, label_set):
+        self.classes = np.unique(label_set)
+        n_features = self.dimension
+
+        for c in self.classes:
+            X_c = desc_set[label_set == c]
+            self.class_log_prior[c] = np.log(len(X_c) / len(desc_set))
+
+            # Laplace smoothing
+            count_wc = np.sum(X_c > 0, axis=0)
+            total_wc = X_c.shape[0]
+            self.feature_probs[c] = (count_wc + self.alpha) / (total_wc + 2 * self.alpha)
+
+    def score(self, x):
+        """ Renvoie un dictionnaire {classe: score log-proba} """
+        eps = 1e-12
+        scores = {}
+        for c in self.classes:
+            P = np.clip(self.feature_probs[c], eps, 1 - eps)
+            log_likelihood = np.sum(x * np.log(P) + (1 - x) * np.log(1 - P))
+            scores[c] = self.class_log_prior[c] + log_likelihood
+        return scores
+
+    def predict(self, x):
+        """ Prédit la classe avec la plus grande proba log-score """
+        scores = self.score(x)
+        return max(scores, key=scores.get)
 
     
 class ClassifierArbreDecision(Classifier):
